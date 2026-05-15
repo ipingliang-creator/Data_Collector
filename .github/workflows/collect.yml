@@ -1,0 +1,50 @@
+name: Collect IV data
+
+# Manual only — trigger from the Actions tab. Public-repo Actions are
+# free and unlimited, so there is no minute budget to manage. Outputs
+# are committed back to iv/ in this repo.
+on:
+  workflow_dispatch:
+    inputs:
+      skip_if_reaches:
+        description: "Skip tickers whose cache already reaches back to this date (YYYY-MM-DD). Leave blank for a full backfill."
+        required: false
+        default: ""
+
+permissions:
+  contents: write
+
+jobs:
+  backfill:
+    runs-on: ubuntu-latest
+    # Public-repo jobs cap at 6h; the full ~150-ticker backfill is ~3h.
+    timeout-minutes: 350
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run IV backfill
+        env:
+          ALPACA_API_KEY: ${{ secrets.ALPACA_API_KEY }}
+          ALPACA_SECRET_KEY: ${{ secrets.ALPACA_SECRET_KEY }}
+          IV_BACKFILL_SKIP_IF_REACHES: ${{ inputs.skip_if_reaches }}
+          PYTHONUNBUFFERED: "1"
+        run: python -m iv_backfill --all
+
+      - name: Commit IV cache
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add iv/
+          if git diff --staged --quiet; then
+            echo "No IV changes to commit."
+          else
+            git commit -m "IV backfill ($(date -u +%Y-%m-%d))"
+            git push
+          fi
