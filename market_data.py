@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import logging
 import os
-from datetime import timedelta
+from datetime import date, timedelta
 from pathlib import Path
 
 import pandas as pd
@@ -18,8 +18,9 @@ import yfinance as yf
 from alpaca.data.enums import DataFeed
 from alpaca.data.historical import StockHistoricalDataClient
 from alpaca.data.historical.option import OptionHistoricalDataClient
-from alpaca.data.requests import StockBarsRequest
+from alpaca.data.requests import OptionChainRequest, StockBarsRequest
 from alpaca.data.timeframe import TimeFrame
+from alpaca.trading.enums import ContractType
 
 from clock import today_et
 
@@ -132,3 +133,88 @@ def load_iv_history_dated(
     df = pd.read_parquet(cache_path)
     df["iv"] = df["iv"].astype(float)
     return df.sort_values("date", ascending=False).reset_index(drop=True)
+
+
+def _append_iv(
+    ticker: str, day: date, iv: float, cache_dir: Path = IV_CACHE_DIR
+) -> None:
+    """Append (or update) `day`'s IV in the cache parquet for `ticker`.
+
+    Idempotent — if a row already exists for `day`, it's replaced.
+    """
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    cache_path = cache_dir / f"{ticker}.parquet"
+    ts = pd.Timestamp(day).normalize()
+    new_row = pd.DataFrame({"date": [ts], "iv": [float(iv)]})
+    if cache_path.exists():
+        existing = pd.read_parquet(cache_path)
+        existing = existing[existing["date"] != ts]
+        combined = pd.concat([existing, new_row], ignore_index=True)
+    else:
+        combined = new_row
+    combined = combined.sort_values("date", ascending=False).reset_index(drop=True)
+    combined.to_parquet(cache_path)
+
+
+def update_iv_today(
+    ticker: str,
+    client: OptionHistoricalDataClient,
+    *,
+    today: date | None = None,
+    target_dte: int = 30,
+    dte_tolerance: int = 7,
+    cache_dir: Path = IV_CACHE_DIR,
+) -> tuple[float | None, dict]:
+    """Fetch today's ATM put IV for `ticker` and append to cache.
+
+    "ATM put" = the put contract whose `|delta|` is closest to 0.50.
+    "~30 DTE" = expiration within `target_dte ± dte_tolerance` days
+    (default 23–37 days, i.e. 30 ± 7).
+
+    Reads IV straight off the live option-chain snapshot — no
+    Black-Scholes back-solve. This is what pins a *fresh* endpoint on
+    each cache; the backfill only reconstructs history (and lags 1-3
+    days because recent option bars aren't available yet).
+
+    Side effect: appends a row to `iv/<ticker>.parquet` when an ATM put
+    is found. Idempotent — re-running on the same day replaces today's
+    row rather than duplicating it.
+
+    Returns `(iv, meta)`. `iv` is None if no qualifying contract was
+    found (e.g., chain empty, no greeks, no IV populated).
+    """
+    today = today or today_et()
+
+    req = OptionChainRequest(
+        underlying_symbol=ticker,
+        type=ContractType.PUT,
+        expiration_date_gte=today + timedelta(days=target_dte - dte_tolerance),
+        expiration_date_lte=today + timedelta(days=target_dte + dte_tolerance),
+    )
+    chain = client.get_option_chain(req)
+
+    best_iv: float | None = None
+    best_distance = float("inf")
+    best_symbol: str | None = None
+    for symbol, snap in chain.items():
+        if not snap.greeks or snap.implied_volatility is None:
+            continue
+        distance = abs(abs(snap.greeks.delta) - 0.50)
+        if distance < best_distance:
+            best_distance = distance
+            best_iv = float(snap.implied_volatility)
+            best_symbol = symbol
+
+    if best_iv is not None:
+        _append_iv(ticker, today, best_iv, cache_dir=cache_dir)
+
+    return best_iv, {
+        "ticker": ticker,
+        "date": today,
+        "iv": best_iv,
+        "atm_symbol": best_symbol,
+        "delta_distance_from_atm": (
+            best_distance if best_distance != float("inf") else None
+        ),
+        "chain_size": len(chain),
+    }
