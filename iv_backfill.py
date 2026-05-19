@@ -55,6 +55,7 @@ from alpaca.trading.client import TradingClient
 from alpaca.trading.enums import AssetStatus, ContractType
 from alpaca.trading.requests import GetOptionContractsRequest
 
+from alpaca_resilience import apply_session_timeout, call_with_retry
 from black_scholes import solve_put_iv
 from clock import today_et
 from market_data import IV_CACHE_DIR, fetch_daily_bars
@@ -79,7 +80,7 @@ def get_trading_client() -> TradingClient:
         raise RuntimeError(
             "ALPACA_API_KEY / ALPACA_SECRET_KEY must be set"
         )
-    return TradingClient(key, secret, paper=True)
+    return apply_session_timeout(TradingClient(key, secret, paper=True))
 
 
 def list_put_contracts(
@@ -108,7 +109,10 @@ def list_put_contracts(
                 limit=1000,
                 page_token=page_token,
             )
-            resp = trading_client.get_option_contracts(req)
+            resp = call_with_retry(
+                lambda: trading_client.get_option_contracts(req),
+                what=f"contracts {ticker}",
+            )
             contracts = getattr(resp, "option_contracts", None) or []
             all_contracts.extend(contracts)
             page_token = getattr(resp, "next_page_token", None)
@@ -250,7 +254,10 @@ def backfill_one_ticker(
             end=d + timedelta(days=1),
         )
         try:
-            opt_bars = options_client.get_option_bars(bar_req)
+            opt_bars = call_with_retry(
+                lambda: options_client.get_option_bars(bar_req),
+                what=f"option bars {contract.symbol}",
+            )
             opt_df = opt_bars.df
         except Exception as exc:
             logger.debug("Bar fetch failed for %s on %s: %s",

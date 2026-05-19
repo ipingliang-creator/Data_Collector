@@ -37,6 +37,7 @@ provides it.
 | `iv_backfill.py` | the backfill (history reconstruction) |
 | `iv_update.py` | the daily update (fresh endpoint) |
 | `market_data.py` | Alpaca clients, daily-bar fetch, chain fetch, universe loaders |
+| `alpaca_resilience.py` | request timeout + retry wrappers for Alpaca calls |
 | `black_scholes.py` | put pricing + IV solver |
 | `clock.py` | America/New_York time helpers |
 | `universe/` | the ticker lists |

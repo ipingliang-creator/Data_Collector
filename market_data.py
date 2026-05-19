@@ -22,6 +22,7 @@ from alpaca.data.requests import OptionChainRequest, StockBarsRequest
 from alpaca.data.timeframe import TimeFrame
 from alpaca.trading.enums import ContractType
 
+from alpaca_resilience import apply_session_timeout, call_with_retry
 from clock import today_et
 
 logger = logging.getLogger(__name__)
@@ -39,7 +40,7 @@ def get_alpaca_client() -> StockHistoricalDataClient:
     secret = os.getenv("ALPACA_SECRET_KEY")
     if not key or not secret:
         raise RuntimeError("ALPACA_API_KEY / ALPACA_SECRET_KEY must be set")
-    return StockHistoricalDataClient(key, secret)
+    return apply_session_timeout(StockHistoricalDataClient(key, secret))
 
 
 def get_options_client() -> OptionHistoricalDataClient:
@@ -48,7 +49,7 @@ def get_options_client() -> OptionHistoricalDataClient:
     secret = os.getenv("ALPACA_SECRET_KEY")
     if not key or not secret:
         raise RuntimeError("ALPACA_API_KEY / ALPACA_SECRET_KEY must be set")
-    return OptionHistoricalDataClient(key, secret)
+    return apply_session_timeout(OptionHistoricalDataClient(key, secret))
 
 
 def _to_yfinance_symbol(ticker: str) -> str:
@@ -77,7 +78,9 @@ def fetch_daily_bars(
             end=end,
             feed=DataFeed.IEX,
         )
-        df = client.get_stock_bars(req).df
+        df = call_with_retry(
+            lambda: client.get_stock_bars(req), what=f"stock bars {ticker}"
+        ).df
         if df.empty:
             raise ValueError("empty Alpaca response")
         if isinstance(df.index, pd.MultiIndex):
@@ -191,7 +194,9 @@ def update_iv_today(
         expiration_date_gte=today + timedelta(days=target_dte - dte_tolerance),
         expiration_date_lte=today + timedelta(days=target_dte + dte_tolerance),
     )
-    chain = client.get_option_chain(req)
+    chain = call_with_retry(
+        lambda: client.get_option_chain(req), what=f"option chain {ticker}"
+    )
 
     best_iv: float | None = None
     best_distance = float("inf")
