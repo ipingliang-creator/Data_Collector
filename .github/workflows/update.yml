@@ -1,8 +1,14 @@
 name: Daily IV update
 
-# Appends today's ATM-put IV (direct snapshot read) to every ticker —
-# keeps each cache's endpoint fresh. Fast (~15 min). Runs automatically
-# each weekday, and can also be triggered manually.
+# RETIRED 2026-09-20. This repo was a temporary stand-in while GitLab
+# compute was exhausted (May-June 2026). The private repo's GitLab
+# `eod-run` job has owned the daily IV update since June; this one kept
+# running weekdays for ~4 months, writing into `iv/` that nothing reads.
+#
+# Do NOT sync this repo's `iv/` data anywhere. It was produced by a May
+# fork of the pipeline with no outlier scrub (`iv_scrub`, added
+# 2026-08-31), so it is worse than the private repo's cache, not a
+# supplement to it.
 on:
   workflow_dispatch:
 
