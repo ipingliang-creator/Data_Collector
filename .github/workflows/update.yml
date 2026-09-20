@@ -5,11 +5,6 @@ name: Daily IV update
 # each weekday, and can also be triggered manually.
 on:
   workflow_dispatch:
-  schedule:
-    # 21:30 UTC ≈ 5:30 PM ET (after the US close) on weekdays, so each
-    # row holds that day's closing IV. GitHub cron is UTC and may run
-    # late — fine for a once-daily snapshot.
-    - cron: "30 21 * * 1-5"
 
 permissions:
   contents: write
